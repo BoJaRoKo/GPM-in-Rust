@@ -1,0 +1,285 @@
+|| CPL program for GPM 
+
+	let routine GPM [index n] be
+|| n is the stack size allowed. This should be as large as 
+|| possible—say 10,000.
+
+§1 prefer index
+	let A, W all be index
+	and H, P, P, C all = 0 
+	and S, E, q, Marker = 39, 33, 1, —2**20 
+	and ST = Newarray[index, (0,n)] 
+	and MachineMacro = Formarray [label, (1,6)][DEF, VAL, UPDATE, BIN, DEC, BAR] 
+	and MST = Formarray [logical, (0,38)][
+		-1, 4, 'D', ‘E', 'F', -1
+		 0, 4, ‘V', ‘A', ‘L', -2,
+		 6, 7, ‘U', ‘P', ‘D', ‘A', ‘T', ‘E', -3,
+		12, 4, ‘B', ‘I', ‘N', -4,
+		21, 4, ‘D’, ‘E', ‘C', -5,
+		27, 4, ‘B’,	‘A’, ‘R’, -6]
+	for k = 0 to 38 do ST[k] := MSP[k]
+	
+||		The name-value pairs for the six machine code macros 
+||	are first assembled in the vector MST and then copied 
+||	into the base of the stack.
+
+§2	let routine Load be 
+		§ test H = 0
+			then do WriteSymbol[A ] 
+			or do ST[S], 5 := A, P+1 
+		return §
+	
+	and routine NextCh be 
+		§ test C = 0
+			then do ReadSymbol[A ] 
+			or do A, C := ST[C], C+l 
+		return §
+		
+	and routine Find [x] be 
+		§2.1	A, W :=E, x
+				§2.2 for r = 0 to ST[W]-1 do
+					if ST[W+r] ≠ ST[A+r+1] go to Next
+					W := A+1+ST[W]
+					return
+Next:				A := ST[A] §2.2 
+				repeat until A < 0 
+				go to Monitor7 §2.1 
+				
+	and routine JumpIfMarked[x] be
+		§ if x < 0 go to MachineMacro[-x] 
+		return §
+
+||		This routine depends on the method of marking machine
+||	code macros. The method adopted here (which is 
+||	different from that described in the paper or used in the
+||	actual Titan program) is to make the value a negative 
+||	index integer which is used to index the label vector 
+||	MachineMacro, whose entries are the labels of the
+||	corresponding programs.
+
+and Number [x] = x — 16 
+and Char[x] = x + 16
+
+||		These are implementation-dependent functions. They
+||	convert the index equivalent of a decimal digit read in
+||	with ReadSymbol to the corresponding number (also of
+||	type index) and vice versa.
+
+|| Main cycle
+Start: NextCh
+		if A = ‘<’ do § q := q+1; go to Q2 §
+		go to A = ‘§’ → Fn,
+			  A = ‘,’ → Nextltem,
+			  A = ‘;’ → Apply,
+			  A = ‘~’ → LoadArg,
+			  A = Marker → EndFn,
+			  A = ‘>’ → Exit,
+			Copy
+			
+Copy: Load
+Scan: if q = 1 go to Start
+Q2:	NextCh
+	if A = ‘<’ do § q := q+1; go to Copy §
+	if A ≠ ‘>’ go to Copy 
+	q := q-1
+	go to q = 1 → Start, Copy 
+	
+|| Warning Character Actions
+Fn:	H, S, F, ST[S], ST[S+l], ST[S+2],ST[S+3] := S+3, S+4, S+1, H, F, 0, 0
+	go to Start
+	
+Nextltem : if H = 0 go to Copy
+	H,S,ST[H],ST[S] := S,S+1,S-H-ST[H],0 
+	go to Start
+	
+Apply:	if P>F go to Monitor1
+	if H=0 go to Copy
+	F, P, H, S, ST[H], ST[S], ST[F-1], ST[F],ST[F+1] := ST[F], F, ST[F-1], S+1 ,S-H, Marker, S-F+2, P, C 
+	unless H=0 do
+		ST[H] := ST[h]+ST[P-1]
+	Find[P+2]
+	JumpIfMarked[ST[W]]
+	C := W+1 
+	go to Start
+	
+LoadArg: if P=0 go to H=0 → Copy,Monitor2
+	NextCh 
+	W := P+2
+	if Number[A]<0 go to Monitor3
+	for f=0 to Number[A]-1 do
+		§ 	W := W+ST[W]
+			if ST[W]=Marker go to Monitor4§
+		for r=1 to ST[W]-1 do
+			§ A := ST[W+r]
+			Load § 
+		go to Start
+		
+EndFn: if F>P go to Monitor5
+	ST[S], A := E, S
+	while ST[A]>=P-l+ST[P-1] do
+		ST[A], A := ST[A]-ST[P-1], ST[A]
+	W := ST[A}
+	while W>P—1 do
+		W := ST[W]
+	ST[A]:= W 
+	E := ST[S]
+	unless H=0 do
+		test H>P
+			then do H := H-ST[P-1] 
+			or do ST[H] := ST[H]-ST[P-l] 
+	P, C, S, A, W := ST[P], ST[P+l], S-ST[P-l], P-1, P-l+ST[P-l]
+	until A=S do
+		ST[A], A, W := ST[W], A+1, W+1
+	go to Start
+		
+Exit:	unless C=H=0 go to Monitor8
+	Finish
+	
+|| Machine Code Macros
+DEF: unless H=0 do ST[H] := ST[H]-ST[P—1]+6 
+	ST[P-l], ST[P+5], E := 6, E, P+5 
+	go to EndFn
+||		This version of DEF is shorter than that given in 
+||	Section 7 as it leaves EndFn to copy back the definition.
+
+VAL: Find[P+6]
+	until ST[W+l]=Marker do
+		§ A, W := ST[W+1], W+1
+		Load §
+	go to EndFn
+	
+UPDATE: Find[P+9]
+	A := P+9+ST[P+9]
+	if ST[A]>ST[W] go to Monitor9
+	for r=1 to ST[A] do
+		ST[W+r] := ST[A+r]
+	go to EndFn
+	
+BIN: W, A :=0, ST[P+7]=‘+’ → P+8, 
+			   Sr[P+7]=‘-’ → P+8,
+			   P+7
+	until ST[A] = Marker do
+		§ let x = Number [ST[A]]
+			unless 0 <= x <= 9 go to MonitorlO 
+			W,A := 10*W+x, A+1 §
+	S, ST[S] := S+l, ST[P+7]=‘-’ → -W*W, 
+	go to EndFn
+	
+DEC: W:=ST[P+7]
+	if W<0 do
+		§ W, A := —W,‘-’
+			Load §
+	§2.1 let W1 = 1
+		until 10*W1> W do W1 := 10*W1
+		§2.2 A, W, W1 := Char[Quot[W,Wl]], Rem[W,Wl],Wl/l0
+			Load §2.2
+		repeat until 1+1 <1	§2.1
+
+	go to EndFn
+
+BAR: W, A : = ST[P+9], ST[P+1l]
+	A := ST[P+7]=‘+’ → W+A,
+		 ST[P+7]=‘-’ → W-A,
+		 ST[P+7]=‘x’ → W*A
+		 ST[P+7]=‘/’ → Quot[W, A],
+		 Rem[W, A]
+	Load
+	go to EndFn
+	
+|| Monitor for errors
+§3 let routine Item[x] be 
+	§3.1 let a,h = A,H 
+		H := 0
+		for k=l to ST[x]=0 → S-x-1, ST[x]—l do
+			§ A := ST[x+k:]
+				Load § 
+		if ST[x]=0 do
+			Write[‘...*t{Incomplete)’]
+		A,H := a, h return §3.1
+||		This routine outputs the item on the stack starting at
+||	ST[x]. If the item is not complete, printing stops at 
+||	ST[S—1] and is followed by ‘...(Incomplete)’.
+
+|| Monitor Entries and Effects
+Monitor1:	|| Unmatched ; in definition string. Treated
+			|| as(;}
+	Write[‘*nMONITOR: Unmatched semicolon in definition of’]
+	Item[P+2]
+	Write[‘*nIf this had been quoted the result would be *n’] 
+	go to Copy
+	
+Monitor2:	||Unquoted ~ in argument list in input stream. Treated as <~> 
+	Write[‘*nMONITOR: Unquoted tilde in argument list off’]
+	Item[F+2]
+	Write[‘*nIf this had been quoted the result would be *n’] 
+	go to Copy
+
+Monitor3:	|| Impossible character (negative) as argument number. Terminate.
+	Write[‘*nMONITOR:	Impossible argument number in definition of ’]
+	Item[P+2] 
+	go to Monitor11
+	
+Monitor4:	 Not enough arguments supplied in call. Terminate.
+	Write[‘*nMONITOR: No argument ’]
+	H := 0 Load
+	Write[‘*n in call for ’]
+	Item[P+2] 
+	go to Monitorl1
+	
+Monitor5:	|| Terminator in impossible place; if C=0, this is the input stream. 
+			|| Probably machine error: Terminate. If C≠0, this is an argument list. 
+			|| Probably due to a missing semicolon: Final semicolon inserted.
+	Write[‘*nMONITOR: Terminator in ’] 
+	if C=0 do
+		§ Write[‘input stream. Probably machine error.’] 
+		go to Monitor11	§
+	Write[‘argument list for ’]
+	Item[F+2]
+	Write[‘*nProbably due to a semicolon missing from the definition off’]
+	Item[P+2]
+	Write[‘*nIf a final semicolon is added the result is n’]
+	C := C-1 
+	go to Apply
+	
+Monitor7:	|| Undefined macro name: Terminate.
+	Write[‘*nMONITOR: Undefined name ’]
+	Item[W]
+	go to Monitor 11
+	
+Monitor8:	||	Wrong exit {not C=H=0). Machine error: Terminate.
+	Write[‘*nMONITOR: Unmatched >. Probably machine error. ’] 
+	go to Monitor 11
+Monitor9:	11 Update string too long: Terminate.
+	Write[‘*nMONITOR: Update argument too long for ’]
+	Item[P+9] go to Monitor 11
+
+Monitor 10:	||	Non-digit in argument for BIN. Terminate.
+	Write[‘*nMONITOR: Non-digit in number ’]
+	go to Monitor11
+	
+Monitor11:	||	General monitor after irremediable errors.
+	W:= 20
+	Write[‘*nCurrent macros are ’]
+	until P=F= 0 do 
+		§4 let W1 be index
+		test P>F
+			then do 
+				§ W1, P := P+2, ST[P]
+				Write[‘*nAlready entered ’]	§
+			or do 
+				§ Wl, F := F+2, ST[F]
+				Write[‘*nNot yet entered ’]	§
+		for r = 1 to W do 
+			§4.1 Item[W1]
+			if ST[W1]=0 do break
+			Wl := W1+ST[W1] 
+			if ST[Wl]=Marker do break 
+			unless W=1 do
+				Write[‘*nArg ', r, ‘*t’] §4.1
+		W:= 1 §4
+		Write[‘*nEnd of monitor printing’]
+		A := ‘Q’
+		Load
+	go to P>F → EndFn, Start §1
+
+|| End of CPL program for GPM.

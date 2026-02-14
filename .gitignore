@@ -1,0 +1,15 @@
+### Rust
+/target/
+**/*.rs.bk
+
+### Windows (MSVC)
+*.pdb
+
+### IDE (opcjonalnie, typowe)
+.vscode/
+.idea/
+*.code-workspace
+
+### OS
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,178 @@
+# Proponowany patch OCR — GPM Appendix 2 (CPL)
+#
+# Plik: GPM_Appendix2_Strachey_CPL.txt
+# Format: unified diff
+#
+# UWAGA:
+# - To jest "oczyszczona" lista poprawek do ręcznego zastosowania.
+# - Nie stosuję tego patcha automatycznie.
+# - Sekcja A zawiera poprawki o bardzo wysokim prawdopodobieństwie (typowe błędy OCR).
+# - Sekcja B zawiera poprawki, gdzie sens jest prawdopodobny, ale nie w 100% pewny.
+
+
+========================
+SEKCJA A — poprawki PEWNE
+========================
+
+--- a/GPM_Appendix2_Strachey_CPL.txt
++++ b/GPM_Appendix2_Strachey_CPL.txt
+@@
+ 	let A, W all be index
+-	and H, P, P, C all = 0 
++	and H, P, F, C all = 0 
+@@
+-	for k = 0 to 38 do ST[k] := MSP[k]
++	for k = 0 to 38 do ST[k] := MST[k]
+@@
+ 	and routine NextCh be 
+ 		§ test C = 0
+ 			then do ReadSymbol[A ] 
+-			or do A, C := ST[C], C+l 
++			or do A, C := ST[C], C+1 
+ 		return §
+@@
+ Start: NextCh
+ 		if A = ‘<’ do § q := q+1; go to Q2 §
+ 		go to A = ‘§’ → Fn,
+-			  A = ‘,’ → Nextltem,
++			  A = ‘,’ → NextItem,
+ 			  A = ‘;’ → Apply,
+ 			  A = ‘~’ → LoadArg,
+ 			  A = Marker → EndFn,
+ 			  A = ‘>’ → Exit,
+ 			Copy
+@@
+ Fn:	H, S, F, ST[S], ST[S+l], ST[S+2],ST[S+3] := S+3, S+4, S+1, H, F, 0, 0
+ 	go to Start
+@@
+-Nextltem : if H = 0 go to Copy
++NextItem : if H = 0 go to Copy
+ 	H,S,ST[H],ST[S] := S,S+1,S-H-ST[H],0 
+ 	go to Start
+@@
+ 	unless H=0 do
+-		ST[H] := ST[h]+ST[P-1]
++		ST[H] := ST[H]+ST[P-1]
+@@
+ EndFn: if F>P go to Monitor5
+ 	ST[S], A := E, S
+-	while ST[A]>=P-l+ST[P-1] do
++	while ST[A]>=P-1+ST[P-1] do
+ 		ST[A], A := ST[A]-ST[P-1], ST[A]
+-	W := ST[A}
+-	while W>P—1 do
++	W := ST[A]
++	while W>P-1 do
+ 		W := ST[W]
+@@
+ 	unless H=0 do
+ 		test H>P
+ 			then do H := H-ST[P-1] 
+-			or do ST[H] := ST[H]-ST[P-l] 
+-	P, C, S, A, W := ST[P], ST[P+l], S-ST[P-l], P-1, P-l+ST[P-l]
++			or do ST[H] := ST[H]-ST[P-1] 
++	P, C, S, A, W := ST[P], ST[P+1], S-ST[P-1], P-1, P-1+ST[P-1]
+@@
+ DEF: unless H=0 do ST[H] := ST[H]-ST[P—1]+6 
+-	ST[P-l], ST[P+5], E := 6, E, P+5 
++	ST[P-1], ST[P+5], E := 6, E, P+5 
+ 	go to EndFn
+@@
+ VAL: Find[P+6]
+-	until ST[W+l]=Marker do
++	until ST[W+1]=Marker do
+ 		§ A, W := ST[W+1], W+1
+ 		Load §
+ 	go to EndFn
+@@
+ BIN: W, A :=0, ST[P+7]=‘+’ → P+8, 
+-			   Sr[P+7]=‘-’ → P+8,
++			   ST[P+7]=‘-’ → P+8,
+ 			   P+7
+@@
+-		§ let x = Number [ST[A]]
+-			unless 0 <= x <= 9 go to MonitorlO 
++		§ let x = Number [ST[A]]
++			unless 0 <= x <= 9 go to Monitor10 
+ 			W,A := 10*W+x, A+1 §
+-	S, ST[S] := S+l, ST[P+7]=‘-’ → -W*W, 
++	S, ST[S] := S+1, ST[P+7]=‘-’ → -W*W, 
+ 	go to EndFn
+@@
+-§2.2 A, W, W1 := Char[Quot[W,Wl]], Rem[W,Wl],Wl/l0
++§2.2 A, W, W1 := Char[Quot[W,W1]], Rem[W,W1],W1/10
+ 		Load §2.2
+@@
+-BAR: W, A : = ST[P+9], ST[P+1l]
++BAR: W, A : = ST[P+9], ST[P+11]
+@@
+ 	for k=l to ST[x]=0 → S-x-1, ST[x]—l do
+ 		§ A := ST[x+k:]
+ 			Load § 
+@@
+-Monitor4:	 Not enough arguments supplied in call. Terminate.
++Monitor4:	 Not enough arguments supplied in call. Terminate.
+ 	Write[‘*nMONITOR: No argument ’]
+ 	H := 0 Load
+ 	Write[‘*n in call for ’]
+ 	Item[P+2] 
+-	go to Monitorl1
++	go to Monitor11
+@@
+-Monitor 10:	||	Non-digit in argument for BIN. Terminate.
++Monitor10:	||	Non-digit in argument for BIN. Terminate.
+ 	Write[‘*nMONITOR: Non-digit in number ’]
+ 	go to Monitor11
+@@
+ 	until P=F= 0 do 
+ 		§4 let W1 be index
+@@
+-			or do 
+-				§ Wl, F := F+2, ST[F]
++			or do 
++				§ W1, F := F+2, ST[F]
+ 				Write[‘*nNot yet entered ’]	§
+@@
+-			Wl := W1+ST[W1] 
+-			if ST[Wl]=Marker do break 
++			W1 := W1+ST[W1] 
++			if ST[W1]=Marker do break 
+@@
+-				Write[‘*nArg ', r, ‘*t’] §4.1
++				Write[‘*nArg ', r, ‘*t’] §4.1
+
+
+============================
+SEKCJA B — poprawki WĄTPLIWE
+============================
+
+# Poniższe zmiany są bardzo prawdopodobne, ale bez porównania z oryginalnym skanem/drukiem
+# zostawiam je jako opcjonalne.
+
+--- a/GPM_Appendix2_Strachey_CPL.txt
++++ b/GPM_Appendix2_Strachey_CPL.txt
+@@
+ §2	let routine Load be 
+ 		§ test H = 0
+ 			then do WriteSymbol[A ] 
+-			or do ST[S], 5 := A, P+1 
++			or do ST[S], S := A, S+1 
+ 		return §
+@@
+ Q2:	NextCh
+-	if A = ‘<’ do § q := q+1; go to Copy §
+-	if A ≠ ‘>’ go to Copy 
+-	q := q-1
+-	go to q = 1 → Start, Copy 
++	if A = ‘<’ do § q := q+1; go to Copy §
++	if A = ‘>’ do § q := q-1; go to q = 1 → Start, Copy §
++	go to Copy
+@@
+ DEC: W:=ST[P+7]
+@@
+-	repeat until 1+1 <1	§2.1
++	repeat until W1 < 1	§2.1
+
+# UWAGA 1 (BIN): w linii "-W*W" prawdopodobnie miało być "-W".
+# Jednak bez weryfikacji na oryginale zostawiam to w Sekcji A jako nietknięte znaczeniowo (tylko S+1).
+# Jeżeli chcesz, mogę przygotować trzecią sekcję (C) z takimi ryzykownymi zmianami stricte semantycznymi.

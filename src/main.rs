@@ -1,7 +1,7 @@
 // main.rs — GPM (Strachey) VM skeleton in Rust (variant A: faithful VM model)
 //
 // Status: compiles, runs, implements:
-// - fixed store ST[0..MEM_SIZE)
+// - fixed store ST[0..self.mem_size)
 // - init MST[0..38] with six machine macros (DEF/VAL/UPDATE/BIN/DEC/BAR)
 // - core I/O + Load + NextCh
 // - main scan cycle: Start / Copy / Scan / Q2
@@ -12,12 +12,17 @@
 // We read input as a stream of Rust `char` so the warning character '§' works correctly
 // even if the input is UTF-8. Store cells are i32, matching Appendix 2 "index" usage.
 
-use std::io::{self, BufRead, Write};
+mod pc;
+mod control_chars;
 
-const MEM_SIZE: usize = 50_000;
+use std::io::{self, Write};
+use crate::pc::Pc;
+use crate::control_chars::ControlChars;
+
 type Cell = i32;
 type Idx = i32;
 
+/* 
 // Control characters (GPM default set)
 const CH_OPEN: Cell = '<' as Cell; // begin quote
 const CH_CLOSE: Cell = '>' as Cell; // end quote
@@ -25,51 +30,19 @@ const CH_DEF: Cell = '&' as Cell; // definition introducer (original '§')
 const CH_ARGSEP: Cell = ',' as Cell; // argument separator
 const CH_APPLY: Cell = ';' as Cell; // apply / call
 const CH_LOADARG: Cell = '~' as Cell; // argument reference
+*/
                                       // Appendix 2: Marker = -2**20 (Titan-style). We use the same sentinel.
 const MARKER: Cell = -(1 << 20);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Pc {
-    // Main cycle
-    Start,
-    Copy,
-    Scan,
-    Q2,
 
-    // Warning character actions
-    Fn,
-    NextItem,
-    Apply,
-    LoadArg,
-    EndFn,
-    Exit,
-
-    // Machine code macros
-    DEF,
-    VAL,
-    UPDATE,
-    BIN,
-    DEC,
-    BAR,
-
-    // Monitors
-    Monitor(u8),
-
-    // End
-    Finish,
-}
-struct Vm<'a> {
-    // input / output (borrowed)
-    reader: &'a mut dyn BufRead,
-    writer: &'a mut dyn Write,
-
-    // input buffering (line-by-line)
-    line_buf: String,
-    pending: Vec<char>,
-    pending_pos: usize,
+struct Vm {
+    cc:ControlChars,
+    mem_size: usize,
+    input:String,
+    output:String,
 
     // fixed store
-    st: [Cell; MEM_SIZE],
+    st: Vec<Cell>,
 
     // registers
     a: Cell,
@@ -87,17 +60,16 @@ struct Vm<'a> {
     pc: Pc,
 }
 
-impl<'a> Vm<'a> {
-    fn new(reader: &'a mut dyn BufRead, writer: &'a mut dyn Write) -> Self {
+impl Vm {
+    fn new(control_chars:ControlChars, mem_size:usize) -> Self {
         let mut vm = Vm {
-            reader,
-            writer,
+            cc: control_chars,
+            mem_size: mem_size,
 
-            line_buf: String::new(),
-            pending: Vec::new(),
-            pending_pos: 0,
+            input: "".to_string(),
+            output: "".to_string(),
 
-            st: [0; MEM_SIZE],
+            st: vec![0;mem_size],
 
             a: 0,
             w: 0,
@@ -193,38 +165,16 @@ impl<'a> Vm<'a> {
     // WriteSymbol[A]
     fn write_symbol(&mut self, x: Cell) {
         let ch = char::from_u32(x as u32).unwrap_or('\u{FFFD}');
-        let mut buf = [0u8; 4];
-        let s = ch.encode_utf8(&mut buf);
-        let _ = self.writer.write_all(s.as_bytes());
-        if ch == '\n' {
-            let _ = self.writer.flush();
-        }
+        self.output.push(ch);
     }
 
     // ReadSymbol[A]
-    fn read_symbol(&mut self) -> Cell {
-        if self.pending_pos < self.pending.len() {
-            let ch = self.pending[self.pending_pos];
-            self.pending_pos += 1;
-            return ch as u32 as Cell;
+    fn read_symbol(&mut self) -> Option<Cell> {
+        let x = self.input.pop();
+        match x {
+            Some(x) => { /* eprint!("{}", x); */ Some(x as Cell) },
+            None => None,
         }
-
-        self.pending.clear();
-        self.pending_pos = 0;
-        self.line_buf.clear();
-
-        match self.reader.read_line(&mut self.line_buf) {
-            Ok(0) => return MARKER,
-            Ok(_) => {
-                self.pending.extend(self.line_buf.chars());
-                if self.pending.is_empty() {
-                    return MARKER;
-                }
-            }
-            Err(_) => return MARKER,
-        }
-
-        self.read_symbol()
     }
 
     // routine Load
@@ -233,7 +183,7 @@ impl<'a> Vm<'a> {
             self.write_symbol(self.a);
         } else {
             let s = Self::u(self.s);
-            if s >= MEM_SIZE {
+            if s >= self.mem_size {
                 self.pc = Pc::Monitor(11);
                 return;
             }
@@ -243,13 +193,18 @@ impl<'a> Vm<'a> {
     }
 
     // routine NextCh
-    fn next_ch(&mut self) {
+    fn next_ch(&mut self) -> bool {
         if self.c == 0 {
-            self.a = self.read_symbol();
+            let a = self.read_symbol();
+            match a {
+                Some(a) => { self.a = a; true },
+                None => false,
+            }
         } else {
             let c = Self::u(self.c);
             self.a = self.st[c];
             self.c += 1;
+            true
         }
     }
 
@@ -257,28 +212,28 @@ impl<'a> Vm<'a> {
 
     // Start: NextCh ... goto ...
     fn op_start(&mut self) -> Pc {
-        self.next_ch();
+        if !self.next_ch() { return Pc::NoInput; }
         match self.a {
-            CH_OPEN => {
+            x if x == self.cc.open => {
                 self.q += 1;
                 Pc::Q2
             }
-            CH_DEF => Pc::Fn,
-            CH_ARGSEP => {
+            x if x == self.cc.def => Pc::Fn,
+            x if x == self.cc.arg_sep => {
                 if self.h == 0 {
                     Pc::Copy
                 } else {
                     Pc::NextItem
                 }
             }
-            CH_APPLY => {
+            x if x == self.cc.apply => {
                 if self.h == 0 {
                     Pc::Copy
                 } else {
                     Pc::Apply
                 }
             }
-            CH_LOADARG => {
+            x if x == self.cc.load_arg => {
                 if self.p == 0 {
                     Pc::Copy
                 } else {
@@ -292,7 +247,7 @@ impl<'a> Vm<'a> {
                     Pc::EndFn
                 }
             }
-            CH_CLOSE => {
+            x if x == self.cc.close => {
                 if self.h == 0 && self.c == 0 {
                     Pc::Finish
                 } else {
@@ -323,11 +278,11 @@ impl<'a> Vm<'a> {
         self.next_ch();
 
         match self.a {
-            CH_OPEN => {
+            x if x == self.cc.open => {
                 self.q += 1;
                 Pc::Copy
             }
-            CH_CLOSE => {
+            x if x == self.cc.close => {
                 self.q -= 1;
                 if self.q == 1 {
                     Pc::Start
@@ -367,7 +322,7 @@ impl<'a> Vm<'a> {
             }
             let a_u = Self::u(a);
             let w_u = Self::u(w);
-            if a_u >= MEM_SIZE || w_u >= MEM_SIZE {
+            if a_u >= self.mem_size || w_u >= self.mem_size {
                 self.pc = Pc::Monitor(11); // internal/overflow (temporary)
                 return;
             }
@@ -390,7 +345,7 @@ impl<'a> Vm<'a> {
                 }
                 let lw_u = Self::u(lw);
                 let ra_u = Self::u(ra);
-                if lw_u >= MEM_SIZE || ra_u >= MEM_SIZE {
+                if lw_u >= self.mem_size || ra_u >= self.mem_size {
                     self.pc = Pc::Monitor(11);
                     return;
                 }
@@ -464,7 +419,7 @@ impl<'a> Vm<'a> {
 
         // bounds check: we will write ST[s0..s0+3] and then set S = s0+4
         let need_top = s0 + 4;
-        if need_top < 0 || Self::u(need_top) > MEM_SIZE {
+        if need_top < 0 || Self::u(need_top) > self.mem_size {
             return Pc::Monitor(11); // stack overflow (temporary; later map to the right monitor)
         }
 
@@ -503,10 +458,10 @@ impl<'a> Vm<'a> {
         let h0 = self.h;
 
         // bounds: we will write ST[h0] and ST[s0], then set H=s0, S=s0+1
-        if s0 < 0 || h0 < 0 || Self::u(s0) >= MEM_SIZE || Self::u(h0) >= MEM_SIZE {
+        if s0 < 0 || h0 < 0 || Self::u(s0) >= self.mem_size || Self::u(h0) >= self.mem_size {
             return Pc::Monitor(11); // temporary hard-stop; later map to proper monitor
         }
-        if Self::u(s0 + 1) > MEM_SIZE {
+        if Self::u(s0 + 1) > self.mem_size {
             return Pc::Monitor(11); // overflow
         }
 
@@ -562,7 +517,7 @@ impl<'a> Vm<'a> {
             return Pc::Monitor(11); // temporary hard-stop
         }
         let need_max = (s0 + 1).max(f0 + 1).max(h0).max(f0);
-        if Self::u(need_max) >= MEM_SIZE {
+        if Self::u(need_max) >= self.mem_size {
             return Pc::Monitor(11); // overflow / invalid
         }
 
@@ -660,7 +615,7 @@ impl<'a> Vm<'a> {
         for _ in 0..x {
             // W := W + ST[W]
             let w_u = Self::u(w);
-            if w_u >= MEM_SIZE {
+            if w_u >= self.mem_size {
                 return Pc::Monitor(11);
             }
             let step = self.st[w_u] as Idx;
@@ -668,7 +623,7 @@ impl<'a> Vm<'a> {
 
             // if ST[W] = Marker goto Monitor4
             let w_u2 = Self::u(w);
-            if w_u2 >= MEM_SIZE {
+            if w_u2 >= self.mem_size {
                 return Pc::Monitor(11);
             }
             if self.st[w_u2] == MARKER {
@@ -678,7 +633,7 @@ impl<'a> Vm<'a> {
 
         // for r = 1 to ST[W]-1 do { A := ST[W+r]; Load }
         let w_u = Self::u(w);
-        if w_u >= MEM_SIZE {
+        if w_u >= self.mem_size {
             return Pc::Monitor(11);
         }
         let len = self.st[w_u] as Idx;
@@ -689,7 +644,7 @@ impl<'a> Vm<'a> {
         for r in 1..len {
             let idx = w + r;
             let idx_u = Self::u(idx);
-            if idx_u >= MEM_SIZE {
+            if idx_u >= self.mem_size {
                 return Pc::Monitor(11);
             }
             self.a = self.st[idx_u];
@@ -742,14 +697,14 @@ impl<'a> Vm<'a> {
 
         // calllen = ST[P-1]
         let calllen_u = Self::u(p0 - 1);
-        if calllen_u >= MEM_SIZE {
+        if calllen_u >= self.mem_size {
             return Pc::Monitor(11);
         }
         let calllen: Idx = self.st[calllen_u] as Idx;
 
         // ST[S], A := E, S
         let s_u = Self::u(s0);
-        if s_u >= MEM_SIZE {
+        if s_u >= self.mem_size {
             return Pc::Monitor(11);
         }
         self.st[s_u] = self.e as Cell;
@@ -759,7 +714,7 @@ impl<'a> Vm<'a> {
         let limit: Idx = (p0 - 1) + calllen;
         loop {
             let a_u = Self::u(a);
-            if a_u >= MEM_SIZE {
+            if a_u >= self.mem_size {
                 return Pc::Monitor(11);
             }
             let link: Idx = self.st[a_u] as Idx;
@@ -777,7 +732,7 @@ impl<'a> Vm<'a> {
 
         // W := ST[A}
         let a_u = Self::u(a);
-        if a_u >= MEM_SIZE {
+        if a_u >= self.mem_size {
             return Pc::Monitor(11);
         }
         let mut w: Idx = self.st[a_u] as Idx;
@@ -786,7 +741,7 @@ impl<'a> Vm<'a> {
         let p_minus_1 = p0 - 1;
         while w > p_minus_1 {
             let w_u = Self::u(w);
-            if w_u >= MEM_SIZE {
+            if w_u >= self.mem_size {
                 return Pc::Monitor(11);
             }
             w = self.st[w_u] as Idx;
@@ -804,7 +759,7 @@ impl<'a> Vm<'a> {
                 self.h -= calllen;
             } else {
                 let h_u = Self::u(self.h);
-                if h_u >= MEM_SIZE {
+                if h_u >= self.mem_size {
                     return Pc::Monitor(11);
                 }
                 self.st[h_u] = (self.st[h_u] as Idx - calllen) as Cell;
@@ -814,7 +769,7 @@ impl<'a> Vm<'a> {
         // P, C, S, A, W := ST[P], ST[P+1], S - ST[P-1], P-1, P-1 + ST[P-1]
         let p_u = Self::u(p0);
         let p1_u = Self::u(p0 + 1);
-        if p_u >= MEM_SIZE || p1_u >= MEM_SIZE {
+        if p_u >= self.mem_size || p1_u >= self.mem_size {
             return Pc::Monitor(11);
         }
         let new_p: Idx = self.st[p_u] as Idx;
@@ -831,7 +786,7 @@ impl<'a> Vm<'a> {
         while a2 != self.s {
             let a2_u = Self::u(a2);
             let w2_u = Self::u(w2);
-            if a2_u >= MEM_SIZE || w2_u >= MEM_SIZE {
+            if a2_u >= self.mem_size || w2_u >= self.mem_size {
                 return Pc::Monitor(11);
             }
             self.st[a2_u] = self.st[w2_u];
@@ -876,14 +831,14 @@ impl<'a> Vm<'a> {
         if pm1 < 0 || pp5 < 0 {
             return Pc::Monitor(11);
         }
-        if Self::u(pm1) >= MEM_SIZE || Self::u(pp5) >= MEM_SIZE {
+        if Self::u(pm1) >= self.mem_size || Self::u(pp5) >= self.mem_size {
             return Pc::Monitor(11);
         }
 
         // unless H = 0 do ST[H] := ST[H] - ST[P-1] + 6
         if self.h != 0 {
             let h = self.h;
-            if h < 0 || Self::u(h) >= MEM_SIZE {
+            if h < 0 || Self::u(h) >= self.mem_size {
                 return Pc::Monitor(11);
             }
             let h_u = Self::u(h);
@@ -914,7 +869,7 @@ impl<'a> Vm<'a> {
         let mut w: Idx = self.w as Idx;
         loop {
             let wp1 = w + 1;
-            if wp1 < 0 || Self::u(wp1) >= MEM_SIZE {
+            if wp1 < 0 || Self::u(wp1) >= self.mem_size {
                 return Pc::Monitor(11);
             }
             if self.st[Self::u(wp1)] == MARKER {
@@ -949,16 +904,16 @@ impl<'a> Vm<'a> {
         let w = self.w as Idx;
 
         let p9 = p + 9;
-        if p9 < 0 || Self::u(p9) >= MEM_SIZE {
+        if p9 < 0 || Self::u(p9) >= self.mem_size {
             return Pc::Monitor(11);
         }
         let a0: Idx = p9 + (self.st[Self::u(p9)] as Idx);
-        if a0 < 0 || Self::u(a0) >= MEM_SIZE {
+        if a0 < 0 || Self::u(a0) >= self.mem_size {
             return Pc::Monitor(11);
         }
 
         let len_new: Idx = self.st[Self::u(a0)] as Idx;
-        if w < 0 || Self::u(w) >= MEM_SIZE {
+        if w < 0 || Self::u(w) >= self.mem_size {
             return Pc::Monitor(11);
         }
         let len_old: Idx = self.st[Self::u(w)] as Idx;
@@ -970,7 +925,7 @@ impl<'a> Vm<'a> {
         for r in 1..=len_new {
             let dst = w + r;
             let src = a0 + r;
-            if dst < 0 || src < 0 || Self::u(dst) >= MEM_SIZE || Self::u(src) >= MEM_SIZE {
+            if dst < 0 || src < 0 || Self::u(dst) >= self.mem_size || Self::u(src) >= self.mem_size {
                 return Pc::Monitor(11);
             }
             self.st[Self::u(dst)] = self.st[Self::u(src)];
@@ -986,7 +941,7 @@ impl<'a> Vm<'a> {
         // go to EndFn
         let p = self.p;
         let p7 = p + 7;
-        if p7 < 0 || Self::u(p7) >= MEM_SIZE {
+        if p7 < 0 || Self::u(p7) >= self.mem_size {
             return Pc::Monitor(11);
         }
 
@@ -1000,7 +955,7 @@ impl<'a> Vm<'a> {
         let mut w_acc: Idx = 0;
 
         loop {
-            if a < 0 || Self::u(a) >= MEM_SIZE {
+            if a < 0 || Self::u(a) >= self.mem_size {
                 return Pc::Monitor(11);
             }
             let ch = self.st[Self::u(a)];
@@ -1019,7 +974,7 @@ impl<'a> Vm<'a> {
 
         self.s += 1;
         let su = Self::u(self.s);
-        if su >= MEM_SIZE {
+        if su >= self.mem_size {
             return Pc::Monitor(11);
         }
 
@@ -1039,7 +994,7 @@ impl<'a> Vm<'a> {
         // { A,W,W1 := Char[Quot[W,W1]], Rem[W,W1], W1/10; Load } repeat until W1 < 1
         // go to EndFn
         let p7 = self.p + 7;
-        if p7 < 0 || Self::u(p7) >= MEM_SIZE {
+        if p7 < 0 || Self::u(p7) >= self.mem_size {
             return Pc::Monitor(11);
         }
 
@@ -1089,7 +1044,7 @@ impl<'a> Vm<'a> {
 
         if [p7, p9, p11]
             .iter()
-            .any(|&i| i < 0 || Self::u(i) >= MEM_SIZE)
+            .any(|&i| i < 0 || Self::u(i) >= self.mem_size)
         {
             return Pc::Monitor(11);
         }
@@ -1155,7 +1110,8 @@ impl<'a> Vm<'a> {
             Pc::BAR => self.op_bar(),
 
             Pc::Monitor(n) => self.monitor(n),
-            Pc::Finish => self.finish(),
+            Pc::Finish => panic!("Finish"),
+            Pc::NoInput => panic!("NoInput"),
         };
 
         self.pc = next;
@@ -1184,7 +1140,6 @@ impl<'a> Vm<'a> {
                 self.write_symbol(ch as u32 as Cell);
             }
         }
-        let _ = self.writer.flush();
     }
     // Appendix 2 §3 Item[x]
     fn item(&mut self, x: Idx) {
@@ -1193,7 +1148,7 @@ impl<'a> Vm<'a> {
         let h0 = self.h;
         self.h = 0;
 
-        if x < 0 || Self::u(x) >= MEM_SIZE {
+        if x < 0 || Self::u(x) >= self.mem_size {
             self.write_text("*n(Item: bad pointer)");
             self.a = a0;
             self.h = h0;
@@ -1211,7 +1166,7 @@ impl<'a> Vm<'a> {
 
         for k in 1..=end_k {
             let idx = x + k;
-            if idx < 0 || Self::u(idx) >= MEM_SIZE {
+            if idx < 0 || Self::u(idx) >= self.mem_size {
                 break;
             }
             self.a = self.st[Self::u(idx)];
@@ -1327,11 +1282,11 @@ impl<'a> Vm<'a> {
                     for r in 1..=w_limit {
                         self.item(w1);
                         // if ST[W1]=0 do break
-                        if w1 >= 0 && Self::u(w1) < MEM_SIZE && self.st[Self::u(w1)] == 0 {
+                        if w1 >= 0 && Self::u(w1) < self.mem_size && self.st[Self::u(w1)] == 0 {
                             break;
                         }
                         // W1 := W1 + ST[W1]
-                        let step = if w1 >= 0 && Self::u(w1) < MEM_SIZE {
+                        let step = if w1 >= 0 && Self::u(w1) < self.mem_size {
                             self.st[Self::u(w1)] as Idx
                         } else {
                             0
@@ -1339,7 +1294,7 @@ impl<'a> Vm<'a> {
                         w1 = w1 + step;
 
                         // if ST[W1] = Marker do break
-                        if w1 >= 0 && Self::u(w1) < MEM_SIZE && self.st[Self::u(w1)] == MARKER {
+                        if w1 >= 0 && Self::u(w1) < self.mem_size && self.st[Self::u(w1)] == MARKER {
                             break;
                         }
 
@@ -1368,21 +1323,34 @@ impl<'a> Vm<'a> {
         }
     }
 
-    fn run(&mut self) {
-        while self.pc != Pc::Finish {
+    fn run(&mut self, input: &str) -> String {
+        let mut input = String::from(input);
+        self.input = input.chars().rev().collect();
+        self.pc = Pc::Start ;
+        while self.pc != Pc::Finish
+                && self.pc != Pc::NoInput {
             self.step();
         }
+        match self.pc {
+            _ => {}
+        }
+        let output = self.output.clone();
+        self.output = "".to_string();
+        output
     }
 }
 
 fn main() {
-    let stdin = io::stdin();
-    let mut reader = io::BufReader::new(stdin.lock());
-
-    let stdout = io::stdout();
-    let mut writer = stdout.lock();
-
-    let mut vm = Vm::new(&mut reader, &mut writer);
-    vm.run();
-    let _ = writer.flush();
+    let def = '&' as Cell;
+    let control_chars = ControlChars{def, .. ControlChars::default() } ;
+    
+    let mut vm = Vm::new(control_chars,50000 );
+    let o0 = vm.run("<&DEF,Suc,<&1,2,3,4,5,6,7,8,9,10,&DEF,1,<~>~1;;>;>");
+    println!("o0: {}", o0);
+    let o1 = vm.run("&DEF,Suc,<&1,2,3,4,5,6,7,8,9,10,&DEF,1,<~>~1;;>;");
+    println!("o1: {}", o1);
+    let o2 = vm.run("&Suc,7;");
+    println!("o2: {}", o2);
+    let o3 = vm.run("Ala ma kota mruczka.");
+    println!("o3: {}", o3);
 }

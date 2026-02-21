@@ -15,23 +15,13 @@
 mod pc;
 mod control_chars;
 
-use std::io::{self, Write};
 use crate::pc::Pc;
 use crate::control_chars::ControlChars;
 
 type Cell = i32;
 type Idx = i32;
 
-/* 
-// Control characters (GPM default set)
-const CH_OPEN: Cell = '<' as Cell; // begin quote
-const CH_CLOSE: Cell = '>' as Cell; // end quote
-const CH_DEF: Cell = '&' as Cell; // definition introducer (original '§')
-const CH_ARGSEP: Cell = ',' as Cell; // argument separator
-const CH_APPLY: Cell = ';' as Cell; // apply / call
-const CH_LOADARG: Cell = '~' as Cell; // argument reference
-*/
-                                      // Appendix 2: Marker = -2**20 (Titan-style). We use the same sentinel.
+// Appendix 2: Marker = -2**20 (Titan-style). We use the same sentinel.
 const MARKER: Cell = -(1 << 20);
 
 
@@ -275,7 +265,9 @@ impl Vm {
 
     // Q2: NextCh; ... quoting depth handling
     fn op_q2(&mut self) -> Pc {
-        self.next_ch();
+        if !self.next_ch() {
+            return Pc::NoInput;
+        }
 
         match self.a {
             x if x == self.cc.open => {
@@ -596,10 +588,8 @@ impl Vm {
         }
 
         // NextCh
-        self.next_ch();
-        // If NextCh hit EOF and set pc, respect it.
-        if self.pc != Pc::LoadArg {
-            return self.pc;
+        if !self.next_ch() {
+            return Pc::NoInput;
         }
 
         // W := P+2
@@ -1081,10 +1071,6 @@ impl Vm {
         Pc::EndFn
     }
 
-    fn finish(&mut self) -> Pc {
-        todo!("fn finish")
-    }
-
     fn step(&mut self) {
         let next = match self.pc {
             // main cycle
@@ -1324,7 +1310,7 @@ impl Vm {
     }
 
     fn run(&mut self, input: &str) -> String {
-        let mut input = String::from(input);
+        let input = String::from(input);
         self.input = input.chars().rev().collect();
         self.pc = Pc::Start ;
         while self.pc != Pc::Finish
@@ -1338,19 +1324,55 @@ impl Vm {
         self.output = "".to_string();
         output
     }
+
+    fn is_stable(&self) -> bool {
+        self.q == 1 && self.h == 0 && self.c == 0 && self.p == 0 && self.f == 0
+    }
+
+    fn end(&mut self) -> String {
+        self.output.clear();
+
+        if self.is_stable() {
+            self.pc = Pc::Finish;
+            return String::new();
+        }
+
+        // Urwanie wejścia w trakcie wczytywania traktujemy jako błąd wewnętrzny.
+        // W oryginale diagnostyka szła na to samo wyjście, więc tu też.
+        self.h = 0;
+        self.pc = Pc::Monitor(11);
+        let _ = self.monitor(11);
+        self.pc = Pc::Finish;
+
+        let output = self.output.clone();
+        self.output.clear();
+        output
+    }
 }
 
 fn main() {
     let def = '&' as Cell;
     let control_chars = ControlChars{def, .. ControlChars::default() } ;
-    
+    let data = [
+        "&DE",
+        "F,Suc,<&1,2,3,4,5,6,7,8,9,1", // tutaj jest świadowme przełamanie definicji wewnątrz parametru
+        "0,&DEF,1,<~>~1;;>;",
+        "&Suc,9;",
+        "&Suc,7;",
+        "&Suc,10;",
+        "&Suc,3,",
+        ";",
+        "Ala ma kota Mruczka.;",
+        "> Ola ma psa.",
+    ];
     let mut vm = Vm::new(control_chars,50000 );
-    let o0 = vm.run("<&DEF,Suc,<&1,2,3,4,5,6,7,8,9,10,&DEF,1,<~>~1;;>;>");
-    println!("o0: {}", o0);
-    let o1 = vm.run("&DEF,Suc,<&1,2,3,4,5,6,7,8,9,10,&DEF,1,<~>~1;;>;");
-    println!("o1: {}", o1);
-    let o2 = vm.run("&Suc,7;");
-    println!("o2: {}", o2);
-    let o3 = vm.run("Ala ma kota mruczka.");
-    println!("o3: {}", o3);
+    let mut i = 0;
+    for s in data {
+        let o = vm.run(s);
+        println!("inp[{}]:\"{}\"\n\t\t\t=> \"{}\"",i,&s,&o);
+        i += 1 ;
+    }
+    let end = vm.end();
+    println!("end():\"{}\"", &end);
+
 }
